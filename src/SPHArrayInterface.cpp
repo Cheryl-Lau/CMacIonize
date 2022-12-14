@@ -154,6 +154,7 @@ void SPHArrayInterface::reset(const double *x, const double *y, const double *z,
   _smoothing_lengths.resize(npart, 0.);
   _masses.resize(npart, 0.);
   _neutral_fractions.resize(npart, 0.);
+  _full_mass_contrib.resize(npart, 0.);
   for (size_t i = 0; i < npart; ++i) {
     _positions[i][0] = x[i] * _unit_length_in_SI;
     _positions[i][1] = y[i] * _unit_length_in_SI;
@@ -198,6 +199,7 @@ void SPHArrayInterface::reset(const double *x, const double *y, const double *z,
   _smoothing_lengths.resize(npart, 0.);
   _masses.resize(npart, 0.);
   _neutral_fractions.resize(npart, 0.);
+  _full_mass_contrib.resize(npart, 0.);
   for (size_t i = 0; i < npart; ++i) {
     _positions[i][0] = x[i] * _unit_length_in_SI;
     _positions[i][1] = y[i] * _unit_length_in_SI;
@@ -242,6 +244,7 @@ void SPHArrayInterface::reset(const float *x, const float *y, const float *z,
   _smoothing_lengths.resize(npart, 0.);
   _masses.resize(npart, 0.);
   _neutral_fractions.resize(npart, 0.);
+  _full_mass_contrib.resize(npart, 0.);
   for (size_t i = 0; i < npart; ++i) {
     _positions[i][0] = x[i] * _unit_length_in_SI;
     _positions[i][1] = y[i] * _unit_length_in_SI;
@@ -939,7 +942,9 @@ DensityValues SPHArrayInterface::operator()(const Cell &cell) {
   double density = 0.;
 
   if (_mapping_type == SPHARRAY_MAPPING_M_OVER_V) {
-    density = _masses[0] / cell.get_volume();
+    const CoordinateVector<> p = cell.get_cell_midpoint();
+    uint_fast32_t closest = _octree->get_closest_ngb(p);
+    density = _masses[closest] / cell.get_volume();
   } else if (_mapping_type == SPHARRAY_MAPPING_CENTROID) {
     const std::vector< uint_fast32_t > ngbs = _octree->get_ngbs(position);
     const size_t numngbs = ngbs.size();
@@ -1052,7 +1057,8 @@ void SPHArrayInterface::write(DensityGrid &grid, uint_fast32_t iteration,
   _time_log.start("Inverse_mapping");
 
   for (unsigned int i = 0; i < _neutral_fractions.size(); ++i) {
-    _neutral_fractions[i] = 1.0;
+    _neutral_fractions[i] = 0.0;
+    _full_mass_contrib[i] = 0.0;
   }
 
   std::vector< Lock > locks(_neutral_fractions.size());
@@ -1069,6 +1075,11 @@ void SPHArrayInterface::write(DensityGrid &grid, uint_fast32_t iteration,
       grid, do_calculation, block);
   workers.do_in_parallel(jobs);
 
+  for (unsigned int i =0; i < _neutral_fractions.size(); ++i) {
+    _neutral_fractions[i] = _neutral_fractions[i] / _full_mass_contrib[i];
+    // NaN bug fix
+    if (_full_mass_contrib[i] == 0.0) _neutral_fractions[i] = 1;
+  }
   _time_log.end("Inverse_mapping");
   _time_log.output("time-log-file.txt", true);
 }

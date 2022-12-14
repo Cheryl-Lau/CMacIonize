@@ -34,6 +34,9 @@
 #include "Octree.hpp"
 #include "TimeLogger.hpp"
 
+#include <iostream>
+using namespace std;
+
 /**
  * @brief Types of mapping that can be used to map SPH particles to grid cells.
  */
@@ -77,6 +80,9 @@ private:
 
   /*! @brief Masses of the SPH particles in the snapshot (in kg). */
   std::vector< double > _masses;
+
+  /*! @brief Mass contributions of the SPH particles in the snapshot. */
+  std::vector< double > _full_mass_contrib;
 
   /*! @brief Smoothing lengths of the SPH particles in the snapshot (in m). */
   std::vector< double > _smoothing_lengths;
@@ -152,13 +158,15 @@ private:
         _locks[closest].lock();
         _array_interface._neutral_fractions[closest] =
             cell.get_ionization_variables().get_ionic_fraction(ION_H_n);
+	      _array_interface._full_mass_contrib[closest] = 1.0;
         _locks[closest].unlock();
+
       } else if (_array_interface._mapping_type == SPHARRAY_MAPPING_CENTROID) {
         const CoordinateVector<> p = cell.get_cell_midpoint();
         const std::vector< uint_fast32_t > ngbs =
             _array_interface._octree->get_ngbs(p);
         const unsigned int numngbs = ngbs.size();
-        double cell_mass = 0.;
+        //double cell_mass = 0.;
         for (unsigned int i = 0; i < numngbs; ++i) {
           const unsigned int index = ngbs[i];
           double r;
@@ -172,33 +180,21 @@ private:
           const double h = _array_interface._smoothing_lengths[index];
           const double u = r / h;
           const double m = _array_interface._masses[index];
-          const double splineval = m * CubicSplineKernel::kernel_evaluate(u, h);
-          cell_mass += splineval;
+          const double splineval = m * CubicSplineKernel::kernel_evaluate(u, h) * cell.get_volume();
+
+	        _locks[index].lock();
+
+          _array_interface._neutral_fractions[index] += 
+		          splineval * cell.get_ionization_variables().get_ionic_fraction(ION_H_n);
+	        _array_interface._full_mass_contrib[index] += splineval;
+
+	        _locks[index].unlock();
         }
 
-        for (unsigned int i = 0; i < numngbs; ++i) {
-          const unsigned int index = ngbs[i];
-          double r;
-          if (!_array_interface._box.get_sides().x()) {
-            r = (p - _array_interface._positions[index]).norm();
-          } else {
-            r = _array_interface._box
-                    .periodic_distance(p, _array_interface._positions[index])
-                    .norm();
-          }
-          const double h = _array_interface._smoothing_lengths[index];
-          const double u = r / h;
-          const double m = _array_interface._masses[index];
-          const double splineval = m * CubicSplineKernel::kernel_evaluate(u, h);
-          _locks[index].lock();
-          _array_interface._neutral_fractions[index] -=
-              splineval / cell_mass *
-              (1. -
-               cell.get_ionization_variables().get_ionic_fraction(ION_H_n));
-          _locks[index].unlock();
-        }
       } else if (_array_interface._mapping_type == SPHARRAY_MAPPING_PETKOVA) {
+
         const CoordinateVector<> position = cell.get_cell_midpoint();
+
         // Find the vertex that is furthest away from the cell midpoint.
         std::vector< Face > face_vector = cell.get_faces();
         double radius = 0.0;
@@ -210,7 +206,6 @@ private:
               radius = distance;
           }
         }
-
         // Find the neighbours that are contained inside of a sphere of centre
         // the cell midpoint and radius given by the distance to the furthest
         // vertex.
@@ -218,7 +213,6 @@ private:
             _array_interface._octree->get_ngbs_sphere(position, radius);
         const unsigned int numngbs = ngbs.size();
 
-        double cell_mass = 0.;
         std::vector< double > denseval;
 
         // Loop over all the neighbouring particles and calculate their mass
@@ -226,24 +220,19 @@ private:
         for (unsigned int i = 0; i < numngbs; i++) {
           const unsigned int index = ngbs[i];
           const double h = _array_interface._smoothing_lengths[index] / 2.0;
+	        const double m = _array_interface._masses[index];
           const CoordinateVector<> particle =
               _array_interface._positions[index];
-          denseval.push_back(
-              _array_interface.mass_contribution(cell, particle, h) *
-              _array_interface._masses[index]);
-          // denseval.push_back(CubicSplineKernel::kernel_evaluate(0.5, h) *
-          // _masses[index]);
-          cell_mass += denseval[i];
-        }
+      
+	        denseval.push_back(_array_interface.mass_contribution(cell, particle, h) * m);
 
-        for (unsigned int i = 0; i < numngbs; i++) {
-          const unsigned int index = ngbs[i];
           _locks[index].lock();
-          _array_interface._neutral_fractions[index] -=
-              denseval[i] / cell_mass *
-              (1. -
-               cell.get_ionization_variables().get_ionic_fraction(ION_H_n));
-          _locks[index].unlock();
+
+          _array_interface._neutral_fractions[index] += 
+	            denseval[i] * cell.get_ionization_variables().get_ionic_fraction(ION_H_n);
+	       _array_interface._full_mass_contrib[index] += denseval[i];
+
+         _locks[index].unlock();
         }
       }
     }
