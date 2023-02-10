@@ -194,7 +194,7 @@ private:
       } else if (_array_interface._mapping_type == SPHARRAY_MAPPING_PETKOVA) {
 
         const CoordinateVector<> position = cell.get_cell_midpoint();
-
+ 
         // Find the vertex that is furthest away from the cell midpoint.
         std::vector< Face > face_vector = cell.get_faces();
         double radius = 0.0;

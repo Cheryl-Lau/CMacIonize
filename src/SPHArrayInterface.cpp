@@ -1075,11 +1075,13 @@ void SPHArrayInterface::write(DensityGrid &grid, uint_fast32_t iteration,
       grid, do_calculation, block);
   workers.do_in_parallel(jobs);
 
+
   for (unsigned int i =0; i < _neutral_fractions.size(); ++i) {
     _neutral_fractions[i] = _neutral_fractions[i] / _full_mass_contrib[i];
     // NaN bug fix
     if (_full_mass_contrib[i] == 0.0) _neutral_fractions[i] = 1;
   }
+
   _time_log.end("Inverse_mapping");
   _time_log.output("time-log-file.txt", true);
 }
